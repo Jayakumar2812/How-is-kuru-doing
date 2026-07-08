@@ -10,6 +10,7 @@ import styles from "./page.module.css";
 const POLL_INTERVAL_MS = 20_000;
 const WINDOW_COUNT = 100;
 const FLOWS_LOAD_DELAY_MS = 5_000;
+const KURU_WINDOW_STORAGE_KEY = "kuru-window-v1";
 
 async function fetchLatestBlock(): Promise<number> {
   const resp = await fetch("/api/latest-block");
@@ -30,6 +31,14 @@ async function fetchWindow(toBlock: number): Promise<KuruWindowResponse> {
   return resp.json() as Promise<KuruWindowResponse>;
 }
 
+async function fetchWindowSnapshot(): Promise<KuruWindowResponse | null> {
+  const resp = await fetch(`/api/kuru-window?count=${WINDOW_COUNT}&cachedOnly=1`);
+  if (!resp.ok) {
+    return null;
+  }
+  return resp.json() as Promise<KuruWindowResponse>;
+}
+
 async function fetchMarginFlows(): Promise<MarginFlowsResponse> {
   const resp = await fetch("/api/margin-flows");
   if (!resp.ok) {
@@ -37,6 +46,40 @@ async function fetchMarginFlows(): Promise<MarginFlowsResponse> {
     throw new Error(body.error ?? `Margin flows API error ${resp.status}`);
   }
   return resp.json() as Promise<MarginFlowsResponse>;
+}
+
+function readStoredKuruWindow(): KuruWindowResponse | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(KURU_WINDOW_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as KuruWindowResponse;
+    if (!parsed.blocks?.length || !Number.isFinite(parsed.latestBlock)) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredKuruWindow(response: KuruWindowResponse): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(KURU_WINDOW_STORAGE_KEY, JSON.stringify(response));
+  } catch {
+    // Ignore quota or private-mode storage errors.
+  }
 }
 
 function formatRelativeTime(timestamp: number): string {
@@ -61,6 +104,7 @@ function shortBlock(n: number): string {
 export default function HomePage() {
   const [data, setData] = useState<KuruWindowResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [newBlockIds, setNewBlockIds] = useState<Set<number>>(new Set());
@@ -83,47 +127,77 @@ export default function HomePage() {
     el.scrollTo({ left: el.scrollWidth, behavior: smooth ? "smooth" : "auto" });
   }, []);
 
-  const refresh = useCallback(async (force = false) => {
-    if (fetchingRef.current) return;
-    fetchingRef.current = true;
-
-    try {
-      const latest = await fetchLatestBlock();
+  const applyWindow = useCallback(
+    (window: KuruWindowResponse, options?: { persist?: boolean; smoothScroll?: boolean }) => {
       const prev = latestBlockRef.current;
-
-      if (!force && prev !== null && latest === prev && dataRef.current !== null) {
-        return;
-      }
-
-      const window = await fetchWindow(latest);
-
-      if (prev !== null && latest > prev) {
+      if (prev !== null && window.latestBlock > prev) {
         const fresh = new Set<number>();
-        for (let n = prev + 1; n <= latest; n++) fresh.add(n);
+        for (let n = prev + 1; n <= window.latestBlock; n++) fresh.add(n);
         setNewBlockIds(fresh);
         setTimeout(() => setNewBlockIds(new Set()), 2000);
       }
 
-      latestBlockRef.current = latest;
+      latestBlockRef.current = window.latestBlock;
       setData(window);
       setError(null);
       setLastUpdated(new Date());
 
-      requestAnimationFrame(() => scrollToLatest(!initialLoadRef.current));
+      if (options?.persist !== false) {
+        writeStoredKuruWindow(window);
+      }
+
+      requestAnimationFrame(() => scrollToLatest(options?.smoothScroll ?? !initialLoadRef.current));
       initialLoadRef.current = false;
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load data");
-    } finally {
-      setLoading(false);
-      fetchingRef.current = false;
-    }
-  }, [scrollToLatest]);
+    },
+    [scrollToLatest]
+  );
+
+  const refresh = useCallback(
+    async (force = false) => {
+      if (fetchingRef.current) return;
+      fetchingRef.current = true;
+      setRefreshing(Boolean(dataRef.current));
+
+      try {
+        const latest = await fetchLatestBlock();
+        const prev = latestBlockRef.current;
+
+        if (!force && prev !== null && latest === prev && dataRef.current !== null) {
+          return;
+        }
+
+        const window = await fetchWindow(latest);
+        applyWindow(window);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load data");
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+        fetchingRef.current = false;
+      }
+    },
+    [applyWindow]
+  );
 
   useEffect(() => {
+    const stored = readStoredKuruWindow();
+    if (stored) {
+      applyWindow(stored, { persist: false, smoothScroll: false });
+      setLoading(false);
+    } else {
+      void (async () => {
+        const snapshot = await fetchWindowSnapshot();
+        if (snapshot) {
+          applyWindow(snapshot, { persist: false, smoothScroll: false });
+          setLoading(false);
+        }
+      })();
+    }
+
     void refresh(true);
     const id = setInterval(() => void refresh(false), POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [applyWindow, refresh]);
 
   useEffect(() => {
     const timeoutId = setTimeout(() => {
@@ -181,7 +255,10 @@ export default function HomePage() {
                 <span className={styles.statValue}>{data.activePct}%</span>
               </div>
               {lastUpdated && (
-                <span className={styles.updatedAt}>{lastUpdated.toLocaleTimeString()}</span>
+                <span className={styles.updatedAt}>
+                  {refreshing ? "Updating… · " : data.stale ? "Cached · " : ""}
+                  {lastUpdated.toLocaleTimeString()}
+                </span>
               )}
             </>
           )}
@@ -199,7 +276,9 @@ export default function HomePage() {
         <p className={styles.scrollHint}>
           {loading && !data
             ? "Batching txs + traces across 100 blocks…"
-            : "Scroll horizontally · ← older blocks · newer blocks →"}
+            : refreshing
+              ? "Refreshing latest blocks in the background…"
+              : "Scroll horizontally · ← older blocks · newer blocks →"}
         </p>
 
         <div className={styles.chainOuter}>

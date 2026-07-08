@@ -13,6 +13,9 @@ export interface KuruWindowResponse {
   blocks: BlockStatus[];
   activeCount: number;
   activePct: number;
+  cached?: boolean;
+  stale?: boolean;
+  scannedAt?: string;
 }
 
 export interface TokenFlow {

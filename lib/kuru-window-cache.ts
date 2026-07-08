@@ -8,6 +8,7 @@ interface CacheEntry {
 
 const globalStore = globalThis as typeof globalThis & {
   __kuruWindowCache?: CacheEntry | null;
+  __kuruWindowScan?: { key: string; promise: Promise<KuruWindowResponse> } | null;
 };
 
 const TTL_MS = 20_000;
@@ -33,5 +34,22 @@ export function setCachedKuruWindow(key: string, response: KuruWindowResponse): 
     key,
     response,
     expiresAt: Date.now() + TTL_MS,
+  });
+}
+
+export function getKuruWindowScan(key: string): Promise<KuruWindowResponse> | null {
+  const scan = globalStore.__kuruWindowScan;
+  if (scan?.key === key) {
+    return scan.promise;
+  }
+  return null;
+}
+
+export function setKuruWindowScan(key: string, promise: Promise<KuruWindowResponse>): void {
+  globalStore.__kuruWindowScan = { key, promise };
+  promise.finally(() => {
+    if (globalStore.__kuruWindowScan?.promise === promise) {
+      globalStore.__kuruWindowScan = null;
+    }
   });
 }
