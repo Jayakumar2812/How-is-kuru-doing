@@ -1,55 +1,64 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import {
+  blocksFromScan,
+  finalizeKuruWindowResponse,
+  mergeIncrementalWindow,
+} from "@/lib/kuru-window-build";
+import {
   getCachedKuruWindow,
   getKuruWindowScan,
+  getLatestKuruWindowSnapshot,
   setCachedKuruWindow,
   setKuruWindowScan,
 } from "@/lib/kuru-window-cache";
 import { readKuruWindowFromBlob, writeKuruWindowToBlob } from "@/lib/kuru-window-blob";
 import { scanKuruWindow } from "@/lib/kuru-window-scan";
 import { getLatestBlock } from "@/lib/rpc";
-import type { BlockStatus, KuruWindowResponse } from "@/lib/types";
+import type { KuruWindowResponse } from "@/lib/types";
 
 export const maxDuration = 120;
 
 const DEFAULT_COUNT = 100;
 const MAX_COUNT = 100;
 
+async function getIncrementalBase(): Promise<KuruWindowResponse | null> {
+  const memorySnapshot = getLatestKuruWindowSnapshot();
+  if (memorySnapshot) {
+    return memorySnapshot;
+  }
+
+  return readKuruWindowFromBlob();
+}
+
 async function buildKuruWindowResponse(
   latestBlock: number,
   count: number
 ): Promise<KuruWindowResponse> {
   const fromBlock = Math.max(1, latestBlock - count + 1);
-  const { traceBlocks, txBlocks, timestamps } = await scanKuruWindow(fromBlock, latestBlock);
+  const base = await getIncrementalBase();
 
-  const blocks: BlockStatus[] = [];
-  for (let n = latestBlock; n >= fromBlock; n--) {
-    const viaTrace = traceBlocks.has(n);
-    const viaTx = txBlocks.has(n);
-    blocks.push({
-      number: n,
-      hasKuru: viaTrace || viaTx,
-      viaTrace,
-      viaTx,
-      timestamp: timestamps.get(n) ?? 0,
-    });
+  if (base && base.latestBlock < latestBlock) {
+    const gap = latestBlock - base.latestBlock;
+    if (gap > 0 && gap < count) {
+      const scanFrom = base.latestBlock + 1;
+      const scan = await scanKuruWindow(scanFrom, latestBlock);
+      const newBlocks = blocksFromScan(scanFrom, latestBlock, scan);
+      const response = mergeIncrementalWindow(base, newBlocks, latestBlock, count);
+
+      const cacheKey = `${response.fromBlock}-${latestBlock}`;
+      setCachedKuruWindow(cacheKey, response);
+      await writeKuruWindowToBlob(response);
+      return response;
+    }
   }
 
-  const activeCount = blocks.filter((b) => b.hasKuru).length;
-  const activePct = count > 0 ? Math.round((activeCount / count) * 1000) / 10 : 0;
-
-  const response: KuruWindowResponse = {
+  const scan = await scanKuruWindow(fromBlock, latestBlock);
+  const response = finalizeKuruWindowResponse(
     latestBlock,
-    fromBlock,
     count,
-    blocks,
-    activeCount,
-    activePct,
-    cached: false,
-    stale: false,
-    scannedAt: new Date().toISOString(),
-  };
+    blocksFromScan(fromBlock, latestBlock, scan)
+  );
 
   const cacheKey = `${fromBlock}-${latestBlock}`;
   setCachedKuruWindow(cacheKey, response);
@@ -67,6 +76,14 @@ export async function GET(request: NextRequest) {
     );
 
     if (cachedOnly) {
+      const memorySnapshot = getLatestKuruWindowSnapshot();
+      if (memorySnapshot) {
+        return NextResponse.json(
+          { ...memorySnapshot, cached: true, stale: true },
+          { headers: { "Cache-Control": "public, max-age=60" } }
+        );
+      }
+
       const blobCached = await readKuruWindowFromBlob();
       if (blobCached) {
         return NextResponse.json(blobCached, {

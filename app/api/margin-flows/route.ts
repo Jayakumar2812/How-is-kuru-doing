@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 import { DEFAULT_TOKEN, scanMarginFlows } from "@/lib/margin-flows";
 import {
@@ -17,6 +17,16 @@ import type { MarginFlowsResponse } from "@/lib/types";
 import { getPreviousUtcDayWindow } from "@/lib/utc";
 
 export const maxDuration = 300;
+
+function isCronRequest(request: NextRequest): boolean {
+  const secret = process.env.CRON_SECRET?.trim();
+  if (!secret) {
+    return false;
+  }
+
+  const auth = request.headers.get("authorization");
+  return auth === `Bearer ${secret}`;
+}
 
 async function buildMarginFlowsResponse(): Promise<MarginFlowsResponse> {
   const utcWindow = getPreviousUtcDayWindow();
@@ -48,26 +58,48 @@ async function buildMarginFlowsResponse(): Promise<MarginFlowsResponse> {
   return response;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const utcWindow = getPreviousUtcDayWindow();
+    const cachedOnly = request.nextUrl.searchParams.get("cachedOnly") === "1";
+    const forceRefresh = isCronRequest(request);
 
-    const memoryCached = getCachedMarginFlows(utcWindow.dateKey);
-    if (memoryCached) {
-      return NextResponse.json(memoryCached, {
-        headers: { "Cache-Control": "public, max-age=3600" },
-      });
+    if (cachedOnly) {
+      const memoryCached = getCachedMarginFlows(utcWindow.dateKey);
+      if (memoryCached) {
+        return NextResponse.json(memoryCached, {
+          headers: { "Cache-Control": "public, max-age=3600" },
+        });
+      }
+
+      const blobCached = await readMarginFlowsFromBlob(utcWindow.dateKey);
+      if (blobCached) {
+        return NextResponse.json(blobCached, {
+          headers: { "Cache-Control": "public, max-age=3600" },
+        });
+      }
+
+      return NextResponse.json({ error: "No cached MarginAccount flows snapshot" }, { status: 404 });
     }
 
-    const blobCached = await readMarginFlowsFromBlob(utcWindow.dateKey);
-    if (blobCached) {
-      setCachedMarginFlows(utcWindow.dateKey, blobCached, {
-        from: blobCached.blockRange.from,
-        to: blobCached.blockRange.to,
-      });
-      return NextResponse.json(blobCached, {
-        headers: { "Cache-Control": "public, max-age=3600" },
-      });
+    if (!forceRefresh) {
+      const memoryCached = getCachedMarginFlows(utcWindow.dateKey);
+      if (memoryCached) {
+        return NextResponse.json(memoryCached, {
+          headers: { "Cache-Control": "public, max-age=3600" },
+        });
+      }
+
+      const blobCached = await readMarginFlowsFromBlob(utcWindow.dateKey);
+      if (blobCached) {
+        setCachedMarginFlows(utcWindow.dateKey, blobCached, {
+          from: blobCached.blockRange.from,
+          to: blobCached.blockRange.to,
+        });
+        return NextResponse.json(blobCached, {
+          headers: { "Cache-Control": "public, max-age=3600" },
+        });
+      }
     }
 
     const inFlight = getMarginFlowsScan(utcWindow.dateKey);

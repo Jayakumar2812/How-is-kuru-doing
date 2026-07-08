@@ -1,4 +1,10 @@
 {
+  "crons": [
+    {
+      "path": "/api/margin-flows",
+      "schedule": "0 0 * * *"
+    }
+  ],
   "functions": {
     "app/api/kuru-window/route.ts": {
       "maxDuration": 120

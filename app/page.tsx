@@ -9,8 +9,8 @@ import styles from "./page.module.css";
 
 const POLL_INTERVAL_MS = 20_000;
 const WINDOW_COUNT = 100;
-const FLOWS_LOAD_DELAY_MS = 5_000;
 const KURU_WINDOW_STORAGE_KEY = "kuru-window-v1";
+const MARGIN_FLOWS_STORAGE_KEY = "margin-flows-v1";
 
 async function fetchLatestBlock(): Promise<number> {
   const resp = await fetch("/api/latest-block");
@@ -44,6 +44,14 @@ async function fetchMarginFlows(): Promise<MarginFlowsResponse> {
   if (!resp.ok) {
     const body = (await resp.json().catch(() => ({}))) as { error?: string };
     throw new Error(body.error ?? `Margin flows API error ${resp.status}`);
+  }
+  return resp.json() as Promise<MarginFlowsResponse>;
+}
+
+async function fetchMarginFlowsSnapshot(): Promise<MarginFlowsResponse | null> {
+  const resp = await fetch("/api/margin-flows?cachedOnly=1");
+  if (!resp.ok) {
+    return null;
   }
   return resp.json() as Promise<MarginFlowsResponse>;
 }
@@ -82,6 +90,40 @@ function writeStoredKuruWindow(response: KuruWindowResponse): void {
   }
 }
 
+function readStoredMarginFlows(): MarginFlowsResponse | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(MARGIN_FLOWS_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as MarginFlowsResponse;
+    if (!parsed.utcWindow?.dateKey || !Array.isArray(parsed.tokens)) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredMarginFlows(response: MarginFlowsResponse): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(MARGIN_FLOWS_STORAGE_KEY, JSON.stringify(response));
+  } catch {
+    // Ignore quota or private-mode storage errors.
+  }
+}
+
 function formatRelativeTime(timestamp: number): string {
   if (!timestamp) return "—";
   const diffSec = Math.max(0, Math.floor(Date.now() / 1000 - timestamp));
@@ -111,15 +153,19 @@ export default function HomePage() {
   const [hoveredBlock, setHoveredBlock] = useState<BlockStatus | null>(null);
   const [flowsData, setFlowsData] = useState<MarginFlowsResponse | null>(null);
   const [flowsLoading, setFlowsLoading] = useState(true);
+  const [flowsRefreshing, setFlowsRefreshing] = useState(false);
   const [flowsError, setFlowsError] = useState<string | null>(null);
   const [selectedToken, setSelectedToken] = useState<string>("");
 
   const latestBlockRef = useRef<number | null>(null);
   const fetchingRef = useRef(false);
+  const flowsFetchingRef = useRef(false);
   const dataRef = useRef<KuruWindowResponse | null>(null);
+  const flowsDataRef = useRef<MarginFlowsResponse | null>(null);
   const chainScrollRef = useRef<HTMLDivElement>(null);
   const initialLoadRef = useRef(true);
   dataRef.current = data;
+  flowsDataRef.current = flowsData;
 
   const scrollToLatest = useCallback((smooth = true) => {
     const el = chainScrollRef.current;
@@ -152,6 +198,19 @@ export default function HomePage() {
     [scrollToLatest]
   );
 
+  const applyFlows = useCallback(
+    (flows: MarginFlowsResponse, options?: { persist?: boolean }) => {
+      setFlowsData(flows);
+      setSelectedToken((prev) => prev || flows.defaultToken);
+      setFlowsError(null);
+
+      if (options?.persist !== false) {
+        writeStoredMarginFlows(flows);
+      }
+    },
+    []
+  );
+
   const refresh = useCallback(
     async (force = false) => {
       if (fetchingRef.current) return;
@@ -179,44 +238,57 @@ export default function HomePage() {
     [applyWindow]
   );
 
+  const refreshFlows = useCallback(async () => {
+    if (flowsFetchingRef.current) return;
+    flowsFetchingRef.current = true;
+    setFlowsRefreshing(Boolean(flowsDataRef.current));
+
+    try {
+      const flows = await fetchMarginFlows();
+      applyFlows(flows);
+    } catch (err) {
+      setFlowsError(err instanceof Error ? err.message : "Failed to load margin flows");
+    } finally {
+      setFlowsLoading(false);
+      setFlowsRefreshing(false);
+      flowsFetchingRef.current = false;
+    }
+  }, [applyFlows]);
+
   useEffect(() => {
-    const stored = readStoredKuruWindow();
-    if (stored) {
-      applyWindow(stored, { persist: false, smoothScroll: false });
+    const storedWindow = readStoredKuruWindow();
+    const storedFlows = readStoredMarginFlows();
+
+    if (storedWindow) {
+      applyWindow(storedWindow, { persist: false, smoothScroll: false });
       setLoading(false);
-    } else {
-      void (async () => {
-        const snapshot = await fetchWindowSnapshot();
-        if (snapshot) {
-          applyWindow(snapshot, { persist: false, smoothScroll: false });
-          setLoading(false);
-        }
-      })();
     }
 
+    if (storedFlows) {
+      applyFlows(storedFlows, { persist: false });
+      setFlowsLoading(false);
+    }
+
+    void Promise.all([
+      storedWindow ? Promise.resolve(null) : fetchWindowSnapshot(),
+      storedFlows ? Promise.resolve(null) : fetchMarginFlowsSnapshot(),
+    ]).then(([windowSnapshot, flowsSnapshot]) => {
+      if (windowSnapshot) {
+        applyWindow(windowSnapshot, { persist: false, smoothScroll: false });
+        setLoading(false);
+      }
+      if (flowsSnapshot) {
+        applyFlows(flowsSnapshot, { persist: false });
+        setFlowsLoading(false);
+      }
+    });
+
     void refresh(true);
+    void refreshFlows();
+
     const id = setInterval(() => void refresh(false), POLL_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [applyWindow, refresh]);
-
-  useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      void (async () => {
-        try {
-          const flows = await fetchMarginFlows();
-          setFlowsData(flows);
-          setSelectedToken((prev) => prev || flows.defaultToken);
-          setFlowsError(null);
-        } catch (err) {
-          setFlowsError(err instanceof Error ? err.message : "Failed to load margin flows");
-        } finally {
-          setFlowsLoading(false);
-        }
-      })();
-    }, FLOWS_LOAD_DELAY_MS);
-
-    return () => clearTimeout(timeoutId);
-  }, []);
+  }, [applyFlows, applyWindow, refresh, refreshFlows]);
 
   const chainBlocks = data ? [...data.blocks].reverse() : [];
   const latestBlock = data?.blocks[0] ?? null;
@@ -363,14 +435,21 @@ export default function HomePage() {
               <p className={styles.flowsWindow}>{flowsData.utcWindow.label}</p>
             ) : (
               <p className={styles.flowsWindow}>
-                Scanning previous UTC day via batched RPC… may take a few minutes.
+                {flowsRefreshing
+                  ? "Refreshing previous UTC day in the background…"
+                  : "Scanning previous UTC day via batched RPC… may take a few minutes."}
               </p>
             )}
             <p className={styles.flowsNote}>
               Complete previous UTC day · updates after midnight UTC
               {flowsData?.scannedAt && (
-                <> · scanned {new Date(flowsData.scannedAt).toLocaleString()}</>
+                <>
+                  {" "}
+                  · scanned {new Date(flowsData.scannedAt).toLocaleString()}
+                  {flowsData.cached ? " (cached)" : ""}
+                </>
               )}
+              {flowsRefreshing && flowsData ? " · updating…" : ""}
             </p>
           </div>
 
@@ -395,6 +474,7 @@ export default function HomePage() {
         {flowsError && (
           <div className={styles.flowsError} role="alert">
             {flowsError}
+            {flowsData && " — showing last successful data"}
           </div>
         )}
 

@@ -21,6 +21,14 @@ function setCache(entry: CacheEntry | null): void {
   globalStore.__kuruWindowCache = entry;
 }
 
+export function getLatestKuruWindowSnapshot(): KuruWindowResponse | null {
+  const cache = getCache();
+  if (!cache || cache.expiresAt <= Date.now()) {
+    return null;
+  }
+  return cache.response;
+}
+
 export function getCachedKuruWindow(key: string): KuruWindowResponse | null {
   const cache = getCache();
   if (!cache || cache.key !== key || cache.expiresAt <= Date.now()) {

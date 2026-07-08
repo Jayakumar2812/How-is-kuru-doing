@@ -1,10 +1,18 @@
 import "server-only";
 
-import { rpcFetch } from "@/lib/rpc-queue";
+import { rpcFetch, traceRpcFetch } from "@/lib/rpc-queue";
 
 export const GET_LOGS_MAX_BLOCK_RANGE = 100;
-const RPC_BATCH_SIZE = 10;
-const TRACE_BATCH_SIZE = 2;
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const RPC_BATCH_SIZE = parsePositiveInt(process.env.RPC_BATCH_SIZE, 20);
+const TRACE_BATCH_SIZE = parsePositiveInt(process.env.RPC_TRACE_BATCH_SIZE, 4);
+const LOGS_CHUNK_CONCURRENCY = parsePositiveInt(process.env.RPC_LOGS_CONCURRENCY, 4);
 
 function normalizeRpcUrl(rpcUrl: string, envName: string): string {
   const url = new URL(rpcUrl);
@@ -60,11 +68,12 @@ async function rpcCall<T>(method: string, params: unknown[]): Promise<T> {
 
 async function rpcBatch<T>(
   calls: Array<{ method: string; params: unknown[] }>,
-  rpcUrl = getRpcUrl()
+  rpcUrl = getRpcUrl(),
+  fetcher: (url: string, init: RequestInit) => Promise<Response> = rpcFetch
 ): Promise<Array<T | null>> {
   if (calls.length === 0) return [];
 
-  const resp = await rpcFetch(rpcUrl, {
+  const resp = await fetcher(rpcUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
@@ -171,7 +180,7 @@ export async function getLogsChunked(
 
   const chunks: RpcLog[][] = ranges.map(() => []);
   const jobs = ranges.map((range, index) => ({ range, index }));
-  await runPool(jobs, 2, async ({ range, index }) => {
+  await runPool(jobs, LOGS_CHUNK_CONCURRENCY, async ({ range, index }) => {
     chunks[index] = await getLogs({ ...filter, ...range });
   });
 
@@ -195,7 +204,6 @@ export async function getBlocksWithTransactions(blockNums: number[]): Promise<Ar
   return results;
 }
 
-/** Slow batched debug_traceBlockByNumber (callTracer) — one RPC batch at a time. */
 export async function getBlockTraces(blockNums: number[]): Promise<Array<TxTraceEntry[] | null>> {
   const results: Array<TxTraceEntry[] | null> = [];
 
@@ -206,7 +214,8 @@ export async function getBlockTraces(blockNums: number[]): Promise<Array<TxTrace
         method: "debug_traceBlockByNumber",
         params: [toHex(blockNum), { tracer: "callTracer" }],
       })),
-      getTraceRpcUrl()
+      getTraceRpcUrl(),
+      traceRpcFetch
     );
     results.push(...batch);
   }
