@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "app/api/kuru-window/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/margin-flows/route.ts": {
+      "maxDuration": 300
+    }
+  }
+}

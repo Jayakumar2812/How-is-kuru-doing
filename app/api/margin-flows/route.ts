@@ -1,0 +1,69 @@
+import { NextResponse } from "next/server";
+
+import { DEFAULT_TOKEN, scanMarginFlows } from "@/lib/margin-flows";
+import {
+  getCachedBlockRange,
+  getCachedMarginFlows,
+  getMarginFlowsScan,
+  setCachedMarginFlows,
+  setMarginFlowsScan,
+} from "@/lib/margin-flows-cache";
+import { resolveUtcDayToBlocks } from "@/lib/rpc";
+import type { MarginFlowsResponse } from "@/lib/types";
+import { getPreviousUtcDayWindow } from "@/lib/utc";
+
+export const maxDuration = 300;
+
+async function buildMarginFlowsResponse(): Promise<MarginFlowsResponse> {
+  const utcWindow = getPreviousUtcDayWindow();
+  const cachedRange = getCachedBlockRange(utcWindow.dateKey);
+  const blockRange = cachedRange
+    ? { fromBlock: cachedRange.from, toBlock: cachedRange.to }
+    : await resolveUtcDayToBlocks(utcWindow.startTs, utcWindow.endTs);
+  const { fromBlock, toBlock } = blockRange;
+
+  const tokens = await scanMarginFlows(fromBlock, toBlock);
+  const scannedAt = new Date().toISOString();
+
+  const response: MarginFlowsResponse = {
+    utcWindow: {
+      dateKey: utcWindow.dateKey,
+      start: utcWindow.startUtc,
+      end: utcWindow.endUtc,
+      label: utcWindow.label,
+    },
+    blockRange: { from: fromBlock, to: toBlock },
+    tokens,
+    defaultToken: DEFAULT_TOKEN,
+    cached: false,
+    scannedAt,
+  };
+
+  setCachedMarginFlows(utcWindow.dateKey, response, { from: fromBlock, to: toBlock });
+  return response;
+}
+
+export async function GET() {
+  try {
+    const utcWindow = getPreviousUtcDayWindow();
+    const cached = getCachedMarginFlows(utcWindow.dateKey);
+    if (cached) {
+      return NextResponse.json(cached, {
+        headers: { "Cache-Control": "public, max-age=3600" },
+      });
+    }
+
+    const inFlight = getMarginFlowsScan(utcWindow.dateKey);
+    const response = inFlight ?? buildMarginFlowsResponse();
+    if (!inFlight) {
+      setMarginFlowsScan(utcWindow.dateKey, response);
+    }
+
+    return NextResponse.json(await response, {
+      headers: { "Cache-Control": "public, max-age=3600" },
+    });
+  } catch (err) {
+    console.error("margin-flows API failed", err);
+    return NextResponse.json({ error: "Failed to load MarginAccount flows" }, { status: 500 });
+  }
+}

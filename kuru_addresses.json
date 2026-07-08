@@ -1,0 +1,65 @@
+{
+  "source": "kuru_address.txt",
+  "protocols": [
+    {
+      "name": "Kuru",
+      "contracts": {
+        "KuruFlowEntrypoint": "0xb3e6778480b2E488385E8205eA05E20060B813cb",
+        "KuruFlowRouter": "0x2f84FB8982073f39Ba47c7fcC29119aF074AbbcB",
+        "KuruAMMVaultImpl": "0xDC2A82E321866C30d62077945e067172C5f970F4",
+        "KuruForwarder": "0x974E61BBa9C4704E8Bcc1923fdC3527B41323FAA",
+        "KuruForwarderImpl": "0xbf6Cc109c6eBcA4B28e3e51FD8798294599CFe2A",
+        "KuruUtils": "0xD8Ea5Ea6A4ebc202C77c795cb2a35835afd127f6",
+        "MarginAccount": "0x2A68ba1833cDf93fa9Da1EEbd7F46242aD8E90c5",
+        "MarginAccountImpl": "0x57cF97FE1FAC7D78B07e7e0761410cb2e91F0ca7",
+        "MonadDeployer": "0xe29309e308af3EE3B1a414E97c37A58509f27D1E",
+        "OrderBookImpl": "0xea2Cc8769Fb04Ff1893Ed11cf517b7F040C823CD",
+        "Router": "0xd651346d7c789536ebf06dc72aE3C8502cd695CC",
+        "RouterImpl": "0x0F2A2a5c0A78c406c26Adb2F1681D3e47322A9CD",
+
+        "Market-MON-USDC": "0xd0f8a6422ccdd812f29d8fb75cf5fcd41483badc",
+        "Market-MON-USDC-Impl": "0x638A74E594625e3FB70a4F6E31f5aB85a596fF46",
+        "Market-MON-USDC-Operator": "0xb0b0197b3d78da38f55e8488b6af7dd0c27156b4",
+        "Market-MON-USDC-BackrunOperator": "0x126C2042747647284a1a189ADE2364E280FAA77E",
+        "Market-MON-USDC-FastlaneEntryPoint": "0x1F8a4Be63C4De67561141523ef07eABDDD22F5b5",
+
+        "Market-WETH-USDC": "0x7cFdC49Bb9a248052F27C4C36cc972A965461Fbd",
+        "Market-WETH-USDC-Impl": "0x638A74E594625e3FB70a4F6E31f5aB85a596fF46",
+        "Market-WETH-USDC-Operator": "0x3036aEF9439324Ed0D149922ADFe54ea3bA23c11",
+        "Market-WETH-USDC-BackrunOperator": "0xf6B9Aa0287392E24b0d069D41df76D30Bb13d11b",
+        "Market-WETH-USDC-FastlaneEntryPoint": "0x3D64a6A11BdD39463eCef7Ab0576B4068D099F1d",
+
+        "Market-cbBTC-USDC": "0x9dadCA2f20DB8043b3d0302a0e88BB5f8Eba08f2",
+        "Market-cbBTC-USDC-Impl": "0x638A74E594625e3FB70a4F6E31f5aB85a596fF46",
+        "Market-cbBTC-USDC-Operator": "0xd36551F6151fae05B063E2079998386C105f7b12",
+        "Market-cbBTC-USDC-BackrunOperator": "0xC2bACD1608a10B47E584f73367121392eF04b6Cf",
+        "Market-cbBTC-USDC-FastlaneEntryPoint": "0xdA36D635F6d376cD4e5CBB2a92c6D2E3E2a64183",
+
+        "Market-XAUt0-USDC": "0x546d220747608DAbb73Cd1bC2c6a2083f0eC8146",
+        "Market-XAUt0-USDC-Impl": "0x638A74E594625e3FB70a4F6E31f5aB85a596fF46",
+        "Market-XAUt0-USDC-Operator": "0x76e4b36eBC3B20b8c76fDAde13C020Cdc4c255f1",
+        "Market-XAUt0-USDC-BackrunOperator": "0xb50a0958df2A89FD913fb006eBE1aac7a33902a4",
+        "Market-XAUt0-USDC-FastlaneEntryPoint": "0x912Cf8Adc96ADC5821e7486d77A6387Adc2FDc03",
+
+        "ActiveVault-MON-USDC-Operator": "0xb0b0197b3d78da38f55e8488b6af7dd0c27156b4",
+        "ActiveVault-MON-USDC-Market": "0x065C9d28E428A0db40191a54d33d5b7c71a9C394",
+        "ActiveVault-MON-USDC-Vault": "0xD6Eae39b96FbdB7daA2227829Be34b4e1BC9069a",
+        "ActiveVault-MON-USDC-Impl": "0xF0995a209e02b44554423B311EC99077525971EF",
+
+        "Additional-Entrypoint": "0x742411e47C4F35d733138640D8BE6047754b36c5",
+        "Additional-Router": "0xf4b3764ea5f06dAFf0F852F3F7Cc291DE4F9ea01",
+
+        "Market-CETES-USDC": "0x52ceb71a33f5f92f030d3a74ceaa84e7d95c74ce",
+        "Market-AUSD-USDC": "0x699abc15308156e9a3ab89ec7387e9cfe1c86a3b",
+        "Market-CHOG-USDC": "0x5e5166f02b8f91ab80833270435172078f4178ca",
+        "Market-AUSD-USDC2": "0x8cf49e35d73b19433ff4d4421637aabb680dc9cc",
+        "Market-SHMON-MON": "0xcc46a703345a18c4ef4be20a447dc8613f0aebc4",
+        "Market-MON-AUSD": "0xf39c4fd5465ea2dd7b0756cebc48a258b34febf3",
+        "Market-Smon-MON": "0xac758746cc4c54751623a84dc085b9b39b661b73",
+        "Market-gMON-MON": "0x1ca0f16a316c3ee0ff3cec5382caad5648ea512d",
+        "Market-emo-MON": "0xe7a4f90369b48d8f5b61f2fd519ec563c11e4b2d",
+        "Market-KUFA-MON": "0x698bc39ca67b02d25688f40f16fd72d4a4b191f2"
+      }
+    }
+  ]
+}
