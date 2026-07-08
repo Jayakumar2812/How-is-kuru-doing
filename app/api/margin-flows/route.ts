@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 
 import { DEFAULT_TOKEN, scanMarginFlows } from "@/lib/margin-flows";
 import {
+  readMarginFlowsFromBlob,
+  writeMarginFlowsToBlob,
+} from "@/lib/margin-flows-blob";
+import {
   getCachedBlockRange,
   getCachedMarginFlows,
   getMarginFlowsScan,
@@ -40,15 +44,28 @@ async function buildMarginFlowsResponse(): Promise<MarginFlowsResponse> {
   };
 
   setCachedMarginFlows(utcWindow.dateKey, response, { from: fromBlock, to: toBlock });
+  await writeMarginFlowsToBlob(utcWindow.dateKey, response);
   return response;
 }
 
 export async function GET() {
   try {
     const utcWindow = getPreviousUtcDayWindow();
-    const cached = getCachedMarginFlows(utcWindow.dateKey);
-    if (cached) {
-      return NextResponse.json(cached, {
+
+    const memoryCached = getCachedMarginFlows(utcWindow.dateKey);
+    if (memoryCached) {
+      return NextResponse.json(memoryCached, {
+        headers: { "Cache-Control": "public, max-age=3600" },
+      });
+    }
+
+    const blobCached = await readMarginFlowsFromBlob(utcWindow.dateKey);
+    if (blobCached) {
+      setCachedMarginFlows(utcWindow.dateKey, blobCached, {
+        from: blobCached.blockRange.from,
+        to: blobCached.blockRange.to,
+      });
+      return NextResponse.json(blobCached, {
         headers: { "Cache-Control": "public, max-age=3600" },
       });
     }
