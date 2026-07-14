@@ -11,6 +11,9 @@
     },
     "app/api/margin-flows/route.ts": {
       "maxDuration": 300
+    },
+    "app/api/compare-quotes/route.ts": {
+      "maxDuration": 120
     }
   }
 }

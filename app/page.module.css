@@ -658,6 +658,56 @@
   color: #64748b;
 }
 
+.compareTeaser {
+  position: relative;
+  z-index: 1;
+  margin: 0.5rem 1.5rem 1.25rem;
+}
+
+.compareTeaserInner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1.25rem 1.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0.85rem;
+  background:
+    linear-gradient(135deg, rgba(52, 211, 153, 0.08), transparent 45%),
+    rgba(0, 0, 0, 0.28);
+}
+
+.compareTeaserTitle {
+  margin: 0;
+  font-family: var(--font-display), sans-serif;
+  font-size: 1.15rem;
+}
+
+.compareTeaserSub {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.compareTeaserCta {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.55rem 0.95rem;
+  border-radius: 0.55rem;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+  background: rgba(52, 211, 153, 0.12);
+  color: #6ee7b7;
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.compareTeaserCta:hover {
+  background: rgba(52, 211, 153, 0.2);
+}
+
 @media (max-width: 640px) {
   .topBar {
     padding: 1rem;
@@ -679,5 +729,9 @@
 
   .connector {
     width: 20px;
+  }
+
+  .compareTeaser {
+    margin: 0.5rem 1rem 1rem;
   }
 }

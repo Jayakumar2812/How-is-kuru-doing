@@ -42,3 +42,10 @@ export interface MarginFlowsResponse {
   cached: boolean;
   scannedAt: string;
 }
+
+export type {
+  CompareQuotesResponse,
+  CompareTokenOut,
+  VenueQuoteRow,
+} from "@/lib/compare/tokens";
+

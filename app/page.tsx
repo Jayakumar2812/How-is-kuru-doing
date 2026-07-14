@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
 import type { BlockStatus, KuruWindowResponse, MarginFlowsResponse, TokenFlow } from "@/lib/types";
@@ -425,6 +426,20 @@ export default function HomePage() {
         ) : (
           <p className={styles.tooltipPlaceholder}>Hover a block for details</p>
         )}
+      </section>
+
+      <section className={styles.compareTeaser} aria-label="USDC swap comparison">
+        <div className={styles.compareTeaserInner}>
+          <div>
+            <h2 className={styles.compareTeaserTitle}>What do you get for $1k USDC?</h2>
+            <p className={styles.compareTeaserSub}>
+              One-hop quotes · Kuru vs Monad DEXs vs global order books
+            </p>
+          </div>
+          <Link href="/compare" className={styles.compareTeaserCta}>
+            Full comparison →
+          </Link>
+        </div>
       </section>
 
       <section className={styles.flowsSection} aria-label="MarginAccount flows">
