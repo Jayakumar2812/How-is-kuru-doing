@@ -1,23 +1,33 @@
 export type SourceStatus = "ok" | "unavailable";
+export type ExchangeId = "binance" | "bybit" | "okx" | "bitget" | "hyperliquid" | "gate";
+export type SideSplit = "source" | "mark-implied";
 
 export interface ClusterLevel {
   price: number;
   longNotionalUsd: number;
   shortNotionalUsd: number;
-  longCount: number | null;
-  shortCount: number | null;
+  notionalUsd: number;
+  exchangeId: ExchangeId;
+  exchangeName: string;
   source: string;
 }
 
-export interface ClusterPayload {
+export interface ClusterSeries {
+  id: ExchangeId;
+  name: string;
   status: SourceStatus;
   reason: string | null;
   needsApiKey: boolean;
+  source: string | null;
+  sideSplit: SideSplit | null;
   midPrice: number | null;
-  snapshotTs: string | null;
-  totalLongUsd: number | null;
-  totalShortUsd: number | null;
   levels: ClusterLevel[];
+}
+
+export interface ClustersPayload {
+  series: ClusterSeries[];
+  needsApiKey: boolean;
+  note: string;
 }
 
 export interface PriceQuote {
@@ -27,7 +37,7 @@ export interface PriceQuote {
 }
 
 export interface VenueRow {
-  id: string;
+  id: ExchangeId;
   name: string;
   kind: "cluster" | "summary";
   status: SourceStatus;
@@ -54,7 +64,7 @@ export interface MonClustersResponse {
     coinbaseSpot: PriceQuote;
     hyperliquidMark: PriceQuote;
   };
-  clusters: ClusterPayload;
+  clusters: ClustersPayload;
   venues: VenueRow[];
   aggregators: AggregatorStatus[];
 }

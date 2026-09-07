@@ -4,7 +4,8 @@ import { fetchJson, finiteNumber, sleep, type HttpResult } from "@/lib/mon-clust
 import type {
   AggregatorStatus,
   ClusterLevel,
-  ClusterPayload,
+  ClusterSeries,
+  ExchangeId,
   PriceQuote,
   VenueRow,
 } from "@/lib/mon-clusters/types";
@@ -13,9 +14,22 @@ const HL_INFO_URL = "https://api.hyperliquid.xyz/info";
 const ZEROX_LEVELS_URL = "https://api.0xarchive.io/v1/hyperliquid/liquidations/MON/levels";
 const ZEROX_VOLUME_URL = "https://api.0xarchive.io/v1/hyperliquid/liquidations/MON/volume";
 const COINBASE_SPOT_URL = "https://api.coinbase.com/v2/prices/MON-USD/spot";
-const CLUSTER_SOURCE = "Hyperliquid · 0xArchive";
+const COINGLASS_BASE = "https://open-api-v4.coinglass.com";
 
-function unavailableVenue(id: string, name: string, kind: VenueRow["kind"], reason: string): VenueRow {
+const CLUSTER_EXCHANGES: Array<{
+  id: Exclude<ExchangeId, "gate">;
+  name: string;
+  cgName: string;
+  symbols: string[];
+}> = [
+  { id: "binance", name: "Binance", cgName: "Binance", symbols: ["MONUSDT"] },
+  { id: "bybit", name: "Bybit", cgName: "Bybit", symbols: ["MONUSDT"] },
+  { id: "okx", name: "OKX", cgName: "OKX", symbols: ["MON-USDT-SWAP", "MONUSDT"] },
+  { id: "bitget", name: "Bitget", cgName: "Bitget", symbols: ["MONUSDT"] },
+  { id: "hyperliquid", name: "Hyperliquid", cgName: "Hyperliquid", symbols: ["MONUSDT", "MON"] },
+];
+
+function unavailableVenue(id: ExchangeId, name: string, kind: VenueRow["kind"], reason: string): VenueRow {
   return {
     id,
     name,
@@ -32,10 +46,35 @@ function unavailableVenue(id: string, name: string, kind: VenueRow["kind"], reas
   };
 }
 
+function unavailableSeries(
+  id: ClusterSeries["id"],
+  name: string,
+  reason: string,
+  needsApiKey: boolean
+): ClusterSeries {
+  return {
+    id,
+    name,
+    status: "unavailable",
+    reason,
+    needsApiKey,
+    source: null,
+    sideSplit: null,
+    midPrice: null,
+    levels: [],
+  };
+}
+
 function zeroxHeaders(): Record<string, string> | null {
   const key = process.env.ZEROX_ARCHIVE_API_KEY?.trim();
   if (!key) return null;
   return { "X-API-Key": key };
+}
+
+function coinglassHeaders(): Record<string, string> | null {
+  const key = process.env.COINGLASS_API_KEY?.trim();
+  if (!key) return null;
+  return { "CG-API-KEY": key };
 }
 
 export async function fetchCoinbaseSpot(): Promise<PriceQuote> {
@@ -111,6 +150,19 @@ export async function fetchHyperliquidPerp(): Promise<HyperliquidPerp> {
   return { markUsd, funding, oiBase, oiUsd, reason: null };
 }
 
+function applyMarkImpliedSides(levels: ClusterLevel[], mark: number | null): ClusterLevel[] {
+  if (mark == null || mark <= 0) return levels;
+  return levels.map((level) => {
+    if (level.price < mark) {
+      return { ...level, longNotionalUsd: level.notionalUsd, shortNotionalUsd: 0 };
+    }
+    if (level.price > mark) {
+      return { ...level, longNotionalUsd: 0, shortNotionalUsd: level.notionalUsd };
+    }
+    return level;
+  });
+}
+
 interface ZeroxLevel {
   price?: number;
   long_notional?: number;
@@ -133,79 +185,62 @@ interface ZeroxEnvelope<T> {
   error?: string;
 }
 
-function parseClusterLevels(raw: ZeroxLevel[] | undefined): ClusterLevel[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((level) => {
-      const price = finiteNumber(level.price);
-      if (price == null || price <= 0) return null;
-      return {
-        price,
-        longNotionalUsd: Math.max(0, finiteNumber(level.long_notional) ?? 0),
-        shortNotionalUsd: Math.max(0, finiteNumber(level.short_notional) ?? 0),
-        longCount: finiteNumber(level.long_count),
-        shortCount: finiteNumber(level.short_count),
-        source: CLUSTER_SOURCE,
-      };
-    })
-    .filter((level): level is ClusterLevel => level != null)
-    .sort((a, b) => a.price - b.price);
-}
-
-export async function fetchZeroxClusters(): Promise<ClusterPayload> {
+export async function fetchZeroxClusterSeries(): Promise<ClusterSeries> {
   const headers = zeroxHeaders();
   if (!headers) {
-    return {
-      status: "unavailable",
-      reason: "Set ZEROX_ARCHIVE_API_KEY on the server to load Hyperliquid price-level clusters.",
-      needsApiKey: true,
-      midPrice: null,
-      snapshotTs: null,
-      totalLongUsd: null,
-      totalShortUsd: null,
-      levels: [],
-    };
+    return unavailableSeries(
+      "hyperliquid",
+      "Hyperliquid",
+      "Set ZEROX_ARCHIVE_API_KEY for Hyperliquid source-split clusters, or COINGLASS_API_KEY for the multi-CEX heatmap.",
+      true
+    );
   }
 
   const url = `${ZEROX_LEVELS_URL}?range_pct=15&buckets=60`;
   const result = await fetchJson<ZeroxEnvelope<ZeroxLevelsData>>(url, { headers, timeoutMs: 12_000 });
   if (!result.ok) {
-    return {
-      status: "unavailable",
-      reason: result.reason,
-      needsApiKey: result.status === 401 || result.status === 403,
-      midPrice: null,
-      snapshotTs: null,
-      totalLongUsd: null,
-      totalShortUsd: null,
-      levels: [],
-    };
+    return unavailableSeries(
+      "hyperliquid",
+      "Hyperliquid",
+      result.reason,
+      result.status === 401 || result.status === 403
+    );
   }
 
-  const payload = result.data;
-  const data = payload.data;
-  if (payload.success === false || !data) {
-    return {
-      status: "unavailable",
-      reason: payload.error ?? "0xArchive returned no cluster data",
-      needsApiKey: false,
-      midPrice: null,
-      snapshotTs: null,
-      totalLongUsd: null,
-      totalShortUsd: null,
-      levels: [],
-    };
+  const data = result.data.data;
+  if (result.data.success === false || !data?.levels) {
+    return unavailableSeries("hyperliquid", "Hyperliquid", result.data.error ?? "0xArchive returned no cluster data", false);
   }
 
-  const levels = parseClusterLevels(data.levels);
+  const midPrice = finiteNumber(data.mid_price);
+  const levels = data.levels
+    .map((level) => {
+      const price = finiteNumber(level.price);
+      if (price == null || price <= 0) return null;
+      const longNotionalUsd = Math.max(0, finiteNumber(level.long_notional) ?? 0);
+      const shortNotionalUsd = Math.max(0, finiteNumber(level.short_notional) ?? 0);
+      return {
+        price,
+        longNotionalUsd,
+        shortNotionalUsd,
+        notionalUsd: longNotionalUsd + shortNotionalUsd,
+        exchangeId: "hyperliquid" as ExchangeId,
+        exchangeName: "Hyperliquid",
+        source: "Hyperliquid · 0xArchive",
+      };
+    })
+    .filter((level): level is ClusterLevel => level != null)
+    .sort((a, b) => a.price - b.price);
+
   return {
-    status: "ok",
-    reason: levels.length === 0 ? "0xArchive returned an empty snapshot for MON" : null,
+    id: "hyperliquid",
+    name: "Hyperliquid",
+    status: levels.length ? "ok" : "unavailable",
+    reason: levels.length ? null : "0xArchive returned an empty MON snapshot",
     needsApiKey: false,
-    midPrice: finiteNumber(data.mid_price),
-    snapshotTs: typeof data.snapshot_ts === "string" ? data.snapshot_ts : null,
-    totalLongUsd: finiteNumber(data.total_long),
-    totalShortUsd: finiteNumber(data.total_short),
+    source: "Hyperliquid · 0xArchive",
+    sideSplit: "source",
+    midPrice,
     levels,
   };
 }
@@ -271,7 +306,7 @@ export async function fetchOkxVenue(): Promise<VenueRow> {
     fetchJson<{ code?: string; data?: Array<{ fundingRate?: string }> }>(
       "https://www.okx.com/api/v5/public/funding-rate?instId=MON-USDT-SWAP"
     ),
-    fetchJson<{ code?: string; data?: Array<{ oiUsd?: string; oiCcy?: string }> }>(
+    fetchJson<{ code?: string; data?: Array<{ oiUsd?: string }> }>(
       "https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId=MON-USDT-SWAP"
     ),
     fetchJson<{ code?: string; data?: Array<[string, string] | { ratio?: string }> }>(
@@ -286,11 +321,7 @@ export async function fetchOkxVenue(): Promise<VenueRow> {
   let longShortRatio: number | null = null;
   if (lsrRes.ok && lsrRes.data.code === "0" && Array.isArray(lsrRes.data.data) && lsrRes.data.data.length > 0) {
     const latest = lsrRes.data.data[0];
-    if (Array.isArray(latest)) {
-      longShortRatio = finiteNumber(latest[1]);
-    } else {
-      longShortRatio = finiteNumber(latest.ratio);
-    }
+    longShortRatio = Array.isArray(latest) ? finiteNumber(latest[1]) : finiteNumber(latest.ratio);
   }
 
   const reasons: string[] = [];
@@ -300,13 +331,13 @@ export async function fetchOkxVenue(): Promise<VenueRow> {
   if (!lsrRes.ok) reasons.push(`L/S: ${lsrRes.reason}`);
 
   if (markUsd == null && funding == null && oiUsd == null && longShortRatio == null) {
-    return unavailableVenue("okx", "OKX", "summary", reasons[0] ?? "OKX MON-USDT-SWAP unavailable");
+    return unavailableVenue("okx", "OKX", "cluster", reasons[0] ?? "OKX MON-USDT-SWAP unavailable");
   }
 
   return {
     id: "okx",
     name: "OKX",
-    kind: "summary",
+    kind: "cluster",
     status: "ok",
     reason: reasons.length ? reasons.join(" · ") : null,
     markUsd,
@@ -315,22 +346,18 @@ export async function fetchOkxVenue(): Promise<VenueRow> {
     liqLong24hUsd: null,
     liqShort24hUsd: null,
     longShortRatio,
-    notes: "MON-USDT-SWAP · 24h liquidation totals are not on the public REST snapshot",
+    notes: "MON-USDT-SWAP · price-level clusters via CoinGlass when the key is set",
   };
 }
 
 interface GateContract {
   mark_price?: string;
   funding_rate?: string;
-  last_price?: string;
-  quanto_multiplier?: string;
 }
 
 interface GateTicker {
   mark_price?: string;
   funding_rate?: string;
-  total_size?: string;
-  quanto_multiplier?: string;
 }
 
 interface GateStat {
@@ -352,7 +379,6 @@ export async function fetchGateVenue(): Promise<VenueRow> {
   const contract = contractRes.ok ? contractRes.data : null;
   const ticker = tickerRes.ok && Array.isArray(tickerRes.data) ? tickerRes.data[0] : null;
   const stats = statsRes.ok && Array.isArray(statsRes.data) ? statsRes.data : [];
-
   const markUsd = finiteNumber(contract?.mark_price) ?? finiteNumber(ticker?.mark_price);
   const funding = finiteNumber(contract?.funding_rate) ?? finiteNumber(ticker?.funding_rate);
   const latestStat = stats.length ? stats[stats.length - 1] : null;
@@ -369,10 +395,14 @@ export async function fetchGateVenue(): Promise<VenueRow> {
     }
   }
 
-  const longShortRatio = finiteNumber(latestStat?.lsr_account);
-
   if (markUsd == null && funding == null && oiUsd == null && liqLong24hUsd == null) {
-    const reason = !contractRes.ok ? contractRes.reason : !tickerRes.ok ? tickerRes.reason : statsRes.ok ? "Gate MON_USDT empty" : statsRes.reason;
+    const reason = !contractRes.ok
+      ? contractRes.reason
+      : !tickerRes.ok
+        ? tickerRes.reason
+        : statsRes.ok
+          ? "Gate MON_USDT empty"
+          : statsRes.reason;
     return unavailableVenue("gate", "Gate", "summary", reason);
   }
 
@@ -387,8 +417,8 @@ export async function fetchGateVenue(): Promise<VenueRow> {
     oiUsd,
     liqLong24hUsd,
     liqShort24hUsd,
-    longShortRatio,
-    notes: "MON_USDT · 24h liquidations summed from hourly contract stats",
+    longShortRatio: finiteNumber(latestStat?.lsr_account),
+    notes: "Extra venue · 24h liquidations from hourly contract stats",
   };
 }
 
@@ -404,7 +434,7 @@ export async function fetchBinanceVenue(): Promise<VenueRow> {
   ]);
 
   if (!premRes.ok) {
-    return unavailableVenue("binance", "Binance", "summary", premRes.reason);
+    return unavailableVenue("binance", "Binance", "cluster", premRes.reason);
   }
 
   const markUsd = finiteNumber(premRes.data.markPrice);
@@ -415,13 +445,13 @@ export async function fetchBinanceVenue(): Promise<VenueRow> {
     lsrRes.ok && Array.isArray(lsrRes.data) ? finiteNumber(lsrRes.data[0]?.longShortRatio) : null;
 
   if (markUsd == null && funding == null && oiUsd == null) {
-    return unavailableVenue("binance", "Binance", "summary", premRes.data.msg ?? "Binance MONUSDT unavailable");
+    return unavailableVenue("binance", "Binance", "cluster", premRes.data.msg ?? "Binance MONUSDT unavailable");
   }
 
   return {
     id: "binance",
     name: "Binance",
-    kind: "summary",
+    kind: "cluster",
     status: "ok",
     reason: null,
     markUsd,
@@ -430,7 +460,7 @@ export async function fetchBinanceVenue(): Promise<VenueRow> {
     liqLong24hUsd: null,
     liqShort24hUsd: null,
     longShortRatio,
-    notes: "MONUSDT · price-level heatmap not on the public API",
+    notes: "MONUSDT · clusters via CoinGlass heatmap when the key is set",
   };
 }
 
@@ -451,33 +481,29 @@ export async function fetchBybitVenue(): Promise<VenueRow> {
   ]);
 
   if (!tickRes.ok) {
-    return unavailableVenue("bybit", "Bybit", "summary", tickRes.reason);
+    return unavailableVenue("bybit", "Bybit", "cluster", tickRes.reason);
   }
   if (tickRes.data.retCode != null && tickRes.data.retCode !== 0) {
-    return unavailableVenue("bybit", "Bybit", "summary", tickRes.data.retMsg ?? `Bybit retCode ${tickRes.data.retCode}`);
+    return unavailableVenue("bybit", "Bybit", "cluster", tickRes.data.retMsg ?? `Bybit retCode ${tickRes.data.retCode}`);
   }
 
   const ticker = tickRes.data.result?.list?.[0];
   const markUsd = finiteNumber(ticker?.markPrice);
   const funding = finiteNumber(ticker?.fundingRate);
   const oiUsd = finiteNumber(ticker?.openInterestValue);
-
-  let longShortRatio: number | null = null;
   const ratio = ratioRes.ok ? ratioRes.data.result?.list?.[0] : null;
   const buy = finiteNumber(ratio?.buyRatio);
   const sell = finiteNumber(ratio?.sellRatio);
-  if (buy != null && sell != null && sell !== 0) {
-    longShortRatio = buy / sell;
-  }
+  const longShortRatio = buy != null && sell != null && sell !== 0 ? buy / sell : null;
 
   if (markUsd == null && funding == null && oiUsd == null) {
-    return unavailableVenue("bybit", "Bybit", "summary", "Bybit MONUSDT ticker empty");
+    return unavailableVenue("bybit", "Bybit", "cluster", "Bybit MONUSDT ticker empty");
   }
 
   return {
     id: "bybit",
     name: "Bybit",
-    kind: "summary",
+    kind: "cluster",
     status: "ok",
     reason: null,
     markUsd,
@@ -486,7 +512,252 @@ export async function fetchBybitVenue(): Promise<VenueRow> {
     liqLong24hUsd: null,
     liqShort24hUsd: null,
     longShortRatio,
-    notes: "MONUSDT · price-level heatmap not on the public API",
+    notes: "MONUSDT · clusters via CoinGlass heatmap when the key is set",
+  };
+}
+
+export async function fetchBitgetVenue(): Promise<VenueRow> {
+  const [tickRes, fundRes, oiRes, lsrRes] = await Promise.all([
+    fetchJson<{
+      code?: string;
+      msg?: string;
+      data?: Array<{ markPrice?: string; lastPr?: string; fundingRate?: string; holdingAmount?: string }>;
+    }>("https://api.bitget.com/api/v2/mix/market/ticker?productType=USDT-FUTURES&symbol=MONUSDT"),
+    fetchJson<{ code?: string; data?: Array<{ fundingRate?: string }> }>(
+      "https://api.bitget.com/api/v2/mix/market/current-fund-rate?productType=usdt-futures&symbol=MONUSDT"
+    ),
+    fetchJson<{ code?: string; data?: { openInterestList?: Array<{ size?: string }> } }>(
+      "https://api.bitget.com/api/v2/mix/market/open-interest?productType=USDT-FUTURES&symbol=MONUSDT"
+    ),
+    fetchJson<{ code?: string; msg?: string; data?: Array<{ longShortRatio?: string }> }>(
+      "https://api.bitget.com/api/v2/mix/market/long-short?symbol=MONUSDT&period=1h"
+    ),
+  ]);
+
+  if (!tickRes.ok) {
+    return unavailableVenue("bitget", "Bitget", "cluster", tickRes.reason);
+  }
+  if (tickRes.data.code !== "00000") {
+    return unavailableVenue("bitget", "Bitget", "cluster", tickRes.data.msg ?? "Bitget ticker rejected");
+  }
+
+  const ticker = tickRes.data.data?.[0];
+  const markUsd = finiteNumber(ticker?.markPrice) ?? finiteNumber(ticker?.lastPr);
+  const funding =
+    (fundRes.ok && fundRes.data.code === "00000" ? finiteNumber(fundRes.data.data?.[0]?.fundingRate) : null) ??
+    finiteNumber(ticker?.fundingRate);
+  const oiBase =
+    oiRes.ok && oiRes.data.code === "00000"
+      ? finiteNumber(oiRes.data.data?.openInterestList?.[0]?.size)
+      : finiteNumber(ticker?.holdingAmount);
+  const oiUsd = markUsd != null && oiBase != null ? markUsd * oiBase : null;
+  const longShortRatio =
+    lsrRes.ok && lsrRes.data.code === "00000" ? finiteNumber(lsrRes.data.data?.[0]?.longShortRatio) : null;
+
+  if (markUsd == null && funding == null && oiUsd == null) {
+    return unavailableVenue("bitget", "Bitget", "cluster", "Bitget MONUSDT ticker empty");
+  }
+
+  return {
+    id: "bitget",
+    name: "Bitget",
+    kind: "cluster",
+    status: "ok",
+    reason: lsrRes.ok && lsrRes.data.code !== "00000" ? lsrRes.data.msg ?? null : null,
+    markUsd,
+    funding,
+    oiUsd,
+    liqLong24hUsd: null,
+    liqShort24hUsd: null,
+    longShortRatio,
+    notes: "MONUSDT · clusters via CoinGlass heatmap when the key is set",
+  };
+}
+
+interface CoinGlassHeatmap {
+  y_axis?: number[];
+  liquidation_leverage_data?: Array<[number, number, number] | number[]>;
+}
+
+interface CoinGlassEnvelope<T> {
+  code?: string;
+  msg?: string;
+  data?: T;
+}
+
+function parseHeatmapLevels(
+  data: CoinGlassHeatmap,
+  exchange: { id: ClusterSeries["id"]; name: string },
+  mark: number | null
+): ClusterLevel[] {
+  const axis = data.y_axis;
+  const points = data.liquidation_leverage_data;
+  if (!Array.isArray(axis) || !Array.isArray(points)) return [];
+
+  const byIndex = new Map<number, number>();
+  for (const point of points) {
+    if (!Array.isArray(point) || point.length < 3) continue;
+    const yIndex = finiteNumber(point[1]);
+    const usd = finiteNumber(point[2]);
+    if (yIndex == null || usd == null) continue;
+    byIndex.set(yIndex, (byIndex.get(yIndex) ?? 0) + Math.max(0, usd));
+  }
+
+  const levels: ClusterLevel[] = [];
+  for (const [index, notionalUsd] of byIndex) {
+    const price = finiteNumber(axis[index]);
+    if (price == null || price <= 0 || notionalUsd <= 0) continue;
+    levels.push({
+      price,
+      longNotionalUsd: 0,
+      shortNotionalUsd: 0,
+      notionalUsd,
+      exchangeId: exchange.id,
+      exchangeName: exchange.name,
+      source: `CoinGlass heatmap · ${exchange.name}`,
+    });
+  }
+  return applyMarkImpliedSides(levels, mark).sort((a, b) => a.price - b.price);
+}
+
+function parseMapLevels(
+  raw: unknown,
+  exchange: { id: ClusterSeries["id"]; name: string },
+  mark: number | null
+): ClusterLevel[] {
+  const bag =
+    raw && typeof raw === "object" && "data" in raw && (raw as { data?: unknown }).data && typeof (raw as { data?: unknown }).data === "object"
+      ? ((raw as { data: Record<string, unknown> }).data as Record<string, unknown>)
+      : raw && typeof raw === "object"
+        ? (raw as Record<string, unknown>)
+        : null;
+  if (!bag) return [];
+
+  const levels: ClusterLevel[] = [];
+  for (const [key, value] of Object.entries(bag)) {
+    const price = finiteNumber(key);
+    if (price == null || price <= 0) continue;
+    let notionalUsd = 0;
+    if (Array.isArray(value)) {
+      for (const row of value) {
+        if (Array.isArray(row)) {
+          notionalUsd += Math.max(0, finiteNumber(row[1]) ?? 0);
+        }
+      }
+    }
+    if (notionalUsd <= 0) continue;
+    levels.push({
+      price,
+      longNotionalUsd: 0,
+      shortNotionalUsd: 0,
+      notionalUsd,
+      exchangeId: exchange.id,
+      exchangeName: exchange.name,
+      source: `CoinGlass map · ${exchange.name}`,
+    });
+  }
+  return applyMarkImpliedSides(levels, mark).sort((a, b) => a.price - b.price);
+}
+
+async function fetchCoinglassExchangeSeries(
+  headers: Record<string, string>,
+  spec: (typeof CLUSTER_EXCHANGES)[number],
+  mark: number | null
+): Promise<ClusterSeries> {
+  let lastReason = "CoinGlass returned no MON heatmap";
+
+  for (const symbol of spec.symbols) {
+    const heatmapUrl = `${COINGLASS_BASE}/api/futures/liquidation/heatmap/model2?exchange=${encodeURIComponent(spec.cgName)}&symbol=${encodeURIComponent(symbol)}&range=24h`;
+    const heatmap = await fetchJson<CoinGlassEnvelope<CoinGlassHeatmap>>(heatmapUrl, { headers, timeoutMs: 12_000 });
+    if (!heatmap.ok) {
+      lastReason = heatmap.reason;
+      continue;
+    }
+    if (heatmap.data.code === "0" && heatmap.data.data) {
+      const levels = parseHeatmapLevels(heatmap.data.data, spec, mark);
+      if (levels.length) {
+        return {
+          id: spec.id,
+          name: spec.name,
+          status: "ok",
+          reason: null,
+          needsApiKey: false,
+          source: `CoinGlass heatmap · ${spec.name} ${symbol}`,
+          sideSplit: "mark-implied",
+          midPrice: mark,
+          levels,
+        };
+      }
+      lastReason = `CoinGlass heatmap empty for ${spec.name} ${symbol}`;
+    } else {
+      lastReason = heatmap.data.msg || heatmap.data.code || lastReason;
+    }
+
+    const mapUrl = `${COINGLASS_BASE}/api/futures/liquidation/map?exchange=${encodeURIComponent(spec.cgName)}&symbol=${encodeURIComponent(symbol)}&range=1d`;
+    const mapRes = await fetchJson<CoinGlassEnvelope<unknown>>(mapUrl, { headers, timeoutMs: 12_000 });
+    if (!mapRes.ok) {
+      lastReason = mapRes.reason;
+      continue;
+    }
+    if (mapRes.data.code === "0" && mapRes.data.data) {
+      const levels = parseMapLevels(mapRes.data.data, spec, mark);
+      if (levels.length) {
+        return {
+          id: spec.id,
+          name: spec.name,
+          status: "ok",
+          reason: null,
+          needsApiKey: false,
+          source: `CoinGlass map · ${spec.name} ${symbol}`,
+          sideSplit: "mark-implied",
+          midPrice: mark,
+          levels,
+        };
+      }
+      lastReason = `CoinGlass map empty for ${spec.name} ${symbol}`;
+    } else {
+      lastReason = mapRes.data.msg || mapRes.data.code || lastReason;
+    }
+  }
+
+  return unavailableSeries(spec.id, spec.name, lastReason, /api key|401|403|plan/i.test(lastReason));
+}
+
+export async function fetchCoinglassClusterSeries(
+  marks: Partial<Record<ExchangeId, number | null>>
+): Promise<{ series: ClusterSeries[]; aggregator: AggregatorStatus }> {
+  const headers = coinglassHeaders();
+  if (!headers) {
+    return {
+      series: CLUSTER_EXCHANGES.map((spec) =>
+        unavailableSeries(
+          spec.id,
+          spec.name,
+          "COINGLASS_API_KEY is not set — CoinGlass heatmap is the multi-CEX price-level source",
+          true
+        )
+      ),
+      aggregator: {
+        id: "coinglass",
+        name: "CoinGlass",
+        status: "unavailable",
+        reason: "COINGLASS_API_KEY is not set",
+      },
+    };
+  }
+
+  const series = await Promise.all(
+    CLUSTER_EXCHANGES.map((spec) => fetchCoinglassExchangeSeries(headers, spec, marks[spec.id] ?? null))
+  );
+  const anyOk = series.some((item) => item.status === "ok");
+  return {
+    series,
+    aggregator: {
+      id: "coinglass",
+      name: "CoinGlass",
+      status: anyOk ? "ok" : "unavailable",
+      reason: anyOk ? null : series[0]?.reason ?? "CoinGlass heatmaps unavailable",
+    },
   };
 }
 
@@ -496,51 +767,49 @@ interface CoinGlassExchangeLiq {
   short_liquidation_usd?: number;
 }
 
-const COINGLASS_VENUE_MAP: Record<string, string> = {
+const COINGLASS_VENUE_MAP: Record<string, ExchangeId> = {
   hyperliquid: "hyperliquid",
   okx: "okx",
   gate: "gate",
   gateio: "gate",
   binance: "binance",
   bybit: "bybit",
+  bitget: "bitget",
 };
 
 export async function fetchCoinglassLiquidations(): Promise<{
   aggregator: AggregatorStatus;
-  byVenue: Record<string, { longUsd: number; shortUsd: number }>;
+  byVenue: Partial<Record<ExchangeId, { longUsd: number; shortUsd: number }>>;
 }> {
-  const key = process.env.COINGLASS_API_KEY?.trim();
-  if (!key) {
+  const headers = coinglassHeaders();
+  if (!headers) {
     return {
       aggregator: {
-        id: "coinglass",
-        name: "CoinGlass",
+        id: "coinglass-liq",
+        name: "CoinGlass 24h liquidations",
         status: "unavailable",
-        reason: "COINGLASS_API_KEY is not set · 24h venue liquidations stay blank unless a venue publishes them",
+        reason: "COINGLASS_API_KEY is not set",
       },
       byVenue: {},
     };
   }
 
-  const result = await fetchJson<{
-    code?: string;
-    msg?: string;
-    data?: CoinGlassExchangeLiq[];
-  }>("https://open-api-v4.coinglass.com/api/futures/liquidation/exchange-list?symbol=MON&range=24h", {
-    headers: { "CG-API-KEY": key },
-  });
+  const result = await fetchJson<CoinGlassEnvelope<CoinGlassExchangeLiq[]>>(
+    `${COINGLASS_BASE}/api/futures/liquidation/exchange-list?symbol=MON&range=24h`,
+    { headers }
+  );
 
   if (!result.ok) {
     return {
-      aggregator: { id: "coinglass", name: "CoinGlass", status: "unavailable", reason: result.reason },
+      aggregator: { id: "coinglass-liq", name: "CoinGlass 24h liquidations", status: "unavailable", reason: result.reason },
       byVenue: {},
     };
   }
   if (result.data.code !== "0" || !Array.isArray(result.data.data)) {
     return {
       aggregator: {
-        id: "coinglass",
-        name: "CoinGlass",
+        id: "coinglass-liq",
+        name: "CoinGlass 24h liquidations",
         status: "unavailable",
         reason: result.data.msg || result.data.code || "CoinGlass returned no MON liquidation list",
       },
@@ -548,7 +817,7 @@ export async function fetchCoinglassLiquidations(): Promise<{
     };
   }
 
-  const byVenue: Record<string, { longUsd: number; shortUsd: number }> = {};
+  const byVenue: Partial<Record<ExchangeId, { longUsd: number; shortUsd: number }>> = {};
   for (const row of result.data.data) {
     const id = COINGLASS_VENUE_MAP[(row.exchange ?? "").toLowerCase().replace(/\s+/g, "")];
     if (!id) continue;
@@ -559,7 +828,7 @@ export async function fetchCoinglassLiquidations(): Promise<{
   }
 
   return {
-    aggregator: { id: "coinglass", name: "CoinGlass", status: "ok", reason: null },
+    aggregator: { id: "coinglass-liq", name: "CoinGlass 24h liquidations", status: "ok", reason: null },
     byVenue,
   };
 }
@@ -567,12 +836,7 @@ export async function fetchCoinglassLiquidations(): Promise<{
 export async function fetchCoinalyzeStatus(): Promise<AggregatorStatus> {
   const key = process.env.COINALYZE_API_KEY?.trim();
   if (!key) {
-    return {
-      id: "coinalyze",
-      name: "Coinalyze",
-      status: "unavailable",
-      reason: "COINALYZE_API_KEY is not set",
-    };
+    return { id: "coinalyze", name: "Coinalyze", status: "unavailable", reason: "COINALYZE_API_KEY is not set" };
   }
 
   const result = await fetchJson<unknown>(
@@ -581,12 +845,12 @@ export async function fetchCoinalyzeStatus(): Promise<AggregatorStatus> {
   if (!result.ok) {
     return { id: "coinalyze", name: "Coinalyze", status: "unavailable", reason: result.reason };
   }
-  return { id: "coinalyze", name: "Coinalyze", status: "ok", reason: "Connected · no MON summary fields merged" };
+  return { id: "coinalyze", name: "Coinalyze", status: "ok", reason: "Connected · no price-level cluster fields merged" };
 }
 
 export function applyExternalLiquidations(
   venues: VenueRow[],
-  byVenue: Record<string, { longUsd: number; shortUsd: number }>
+  byVenue: Partial<Record<ExchangeId, { longUsd: number; shortUsd: number }>>
 ): VenueRow[] {
   return venues.map((venue) => {
     const extra = byVenue[venue.id];
@@ -601,4 +865,11 @@ export function applyExternalLiquidations(
         : "24h liquidations from CoinGlass",
     };
   });
+}
+
+export function mergeClusterSeries(preferred: ClusterSeries, fallback: ClusterSeries | undefined): ClusterSeries {
+  if (preferred.status === "ok" && preferred.levels.length) return preferred;
+  if (fallback && fallback.status === "ok" && fallback.levels.length) return fallback;
+  if (preferred.status === "ok") return preferred;
+  return fallback ?? preferred;
 }

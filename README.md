@@ -29,24 +29,27 @@ A block is marked active if any trace or transaction has `to` matching a Kuru ad
 
 ## MON liquidation clusters (`/mon`)
 
-Dark desk page for **MON** perp positioning:
+Dark desk page for **MON** perp **cross-exchange** liquidation / long-short clusters.
 
-- Coinbase spot (`MON-USD`) and Hyperliquid mark / funding / open interest
-- Price-level **long vs short cluster chart** from Hyperliquid via [0xArchive](https://docs.0xarchive.io/hyperliquid-liquidations-data-api) `GET /v1/hyperliquid/liquidations/MON/levels`
-- Venue **summary table** (mark, funding, OI, 24h completed long/short liquidations, account L/S when published)
+- Coinbase spot (`MON-USD`) plus per-venue mark / funding / OI
+- Price-level **cluster map** with exchange toggles (Binance, Bybit, OKX, Bitget, Hyperliquid) and Longs / Shorts / Both
+- Combined overlay (stacked per-exchange series) plus densest-bucket tables with an Exchange / Source column
+- Venue detail: 24h completed long/short liquidations and account L/S when published
 
-Set `ZEROX_ARCHIVE_API_KEY` in `.env.local` (server-only). Without it, public spot/mark/funding still load and the heatmap asks for the key — missing cells are unavailable, never invented.
+### Cluster vs summary
 
 | Source | Role |
 | --- | --- |
-| 0xArchive Hyperliquid levels | **Cluster heatmap** (projected forced-liquidation buckets) |
-| 0xArchive Hyperliquid volume | 24h completed HL long/short liquidations (same key) |
-| Hyperliquid `metaAndAssetCtxs` | Mark, funding, OI |
+| **CoinGlass** heatmap / map (`COINGLASS_API_KEY`) | **Primary multi-CEX price-level clusters** for Binance, Bybit, OKX, Bitget (and HL if listed). Sides are mark-implied: below mark = longs, above = shorts. |
+| **0xArchive** Hyperliquid levels (`ZEROX_ARCHIVE_API_KEY`) | Extra HL series with **source-split** long vs short buckets |
+| CoinGlass exchange-list | 24h completed long/short liquidations per venue |
+| Hyperliquid `metaAndAssetCtxs` | HL mark, funding, OI |
 | Coinbase spot | `MON-USD` |
-| OKX `MON-USDT-SWAP` | Summary: mark, funding, OI, account L/S |
-| Gate `MON_USDT` | Summary: mark, funding, OI, account L/S, 24h liq from hourly stats |
-| Binance / Bybit public perps | Summary when reachable; often geo-blocked |
-| CoinGlass / Coinalyze | Optional keys; used only if they respond — otherwise shown as unavailable |
+| Binance / Bybit / OKX / Bitget public REST | Mark, funding, OI, account L/S when the region allows |
+| Gate public REST | Extra summary venue (hourly 24h liq stats) |
+| Coinalyze | Optional key only; unavailable without it |
+
+True CEX price-bucket heatmaps are not on public Binance/Bybit/OKX/Bitget REST. Without `COINGLASS_API_KEY` the map prompts for the key and still loads public spot/mark/funding — missing cells are unavailable, never invented.
 
 Venue APIs are proxied through `GET /api/mon-clusters`. The page auto-refreshes about every 90 seconds and stamps last-updated in IST and UTC.
 
@@ -54,7 +57,7 @@ Venue APIs are proxied through `GET /api/mon-clusters`. The page auto-refreshes 
 
 1. Push this repo to GitHub
 2. Import the project in [Vercel](https://vercel.com/new)
-3. Add environment variables: `MONAD_RPC_URL` and, for the MON cluster heatmap, `ZEROX_ARCHIVE_API_KEY`
+3. Add environment variables: `MONAD_RPC_URL`, `COINGLASS_API_KEY` (multi-CEX cluster map), and optionally `ZEROX_ARCHIVE_API_KEY` (Hyperliquid source-split clusters)
 4. Deploy — Vercel auto-detects Next.js
 
 The API routes are configured for longer execution in [`vercel.json`](vercel.json).

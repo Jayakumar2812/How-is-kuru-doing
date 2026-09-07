@@ -451,7 +451,7 @@ export default function HomePage() {
             <div>
               <h2 className={styles.compareTeaserTitle}>MON long / short clusters</h2>
               <p className={styles.compareTeaserSub}>
-                Hyperliquid liquidation heatmap · venue mark, funding, OI, 24h rekt
+                Binance · Bybit · OKX · Bitget overlay · mark, funding, OI, 24h rekt
               </p>
             </div>
             <Link href="/mon" className={styles.compareTeaserCta}>
