@@ -39,13 +39,23 @@ async function buildMonClusters(): Promise<MonClustersResponse> {
     fetchBitgetVenue(),
   ]);
 
+  const fallbackMark =
+    coinbaseSpot.usd ??
+    hyperliquid.markUsd ??
+    okx.markUsd ??
+    bitget.markUsd ??
+    gate.markUsd ??
+    binance.markUsd ??
+    bybit.markUsd ??
+    null;
+
   const marks: Partial<Record<ExchangeId, number | null>> = {
-    binance: binance.markUsd,
-    bybit: bybit.markUsd,
-    okx: okx.markUsd,
-    bitget: bitget.markUsd,
-    hyperliquid: hyperliquid.markUsd,
-    gate: gate.markUsd,
+    binance: binance.markUsd ?? fallbackMark,
+    bybit: bybit.markUsd ?? fallbackMark,
+    okx: okx.markUsd ?? fallbackMark,
+    bitget: bitget.markUsd ?? fallbackMark,
+    hyperliquid: hyperliquid.markUsd ?? fallbackMark,
+    gate: gate.markUsd ?? fallbackMark,
   };
 
   const [hlSeries, hlVolume, coinglassClusters, coinglassLiqs, coinalyze] = await Promise.all([

@@ -577,6 +577,7 @@ export async function fetchBitgetVenue(): Promise<VenueRow> {
 interface CoinGlassHeatmap {
   y_axis?: number[];
   liquidation_leverage_data?: Array<[number, number, number] | number[]>;
+  price_candlesticks?: Array<Array<number | string>>;
 }
 
 interface CoinGlassEnvelope<T> {
@@ -659,20 +660,18 @@ function parseMapLevels(
   return applyMarkImpliedSides(levels, mark).sort((a, b) => a.price - b.price);
 }
 
+function midFromHeatmap(data: CoinGlassHeatmap): number | null {
+  const candles = data.price_candlesticks;
+  if (!Array.isArray(candles) || candles.length === 0) return null;
+  const last = candles[candles.length - 1];
+  return Array.isArray(last) ? finiteNumber(last[4]) : null;
+}
+
 async function fetchCoinglassExchangeSeries(
   headers: Record<string, string>,
   spec: (typeof CLUSTER_EXCHANGES)[number],
   mark: number | null
 ): Promise<ClusterSeries> {
-  if (mark == null || mark <= 0) {
-    return unavailableSeries(
-      spec.id,
-      spec.name,
-      "Reference mark unavailable, so long/short sides cannot be inferred honestly for this venue",
-      false
-    );
-  }
-
   let lastReason = "CoinGlass returned no MON heatmap";
 
   for (const symbol of spec.symbols) {
@@ -683,17 +682,21 @@ async function fetchCoinglassExchangeSeries(
       continue;
     }
     if (heatmap.data.code === "0" && heatmap.data.data) {
-      const levels = parseHeatmapLevels(heatmap.data.data, spec, mark);
+      const inferredMark = mark ?? midFromHeatmap(heatmap.data.data);
+      const levels = parseHeatmapLevels(heatmap.data.data, spec, inferredMark);
       if (levels.length) {
         return {
           id: spec.id,
           name: spec.name,
           status: "ok",
-          reason: null,
+          reason:
+            inferredMark == null
+              ? "Density only — no mark available to split longs vs shorts"
+              : null,
           needsApiKey: false,
           source: `CoinGlass heatmap · ${spec.name} ${symbol}`,
-          sideSplit: "mark-implied",
-          midPrice: mark,
+          sideSplit: inferredMark == null ? null : "mark-implied",
+          midPrice: inferredMark,
           levels,
         };
       }
