@@ -664,6 +664,15 @@ async function fetchCoinglassExchangeSeries(
   spec: (typeof CLUSTER_EXCHANGES)[number],
   mark: number | null
 ): Promise<ClusterSeries> {
+  if (mark == null || mark <= 0) {
+    return unavailableSeries(
+      spec.id,
+      spec.name,
+      "Reference mark unavailable, so long/short sides cannot be inferred honestly for this venue",
+      false
+    );
+  }
+
   let lastReason = "CoinGlass returned no MON heatmap";
 
   for (const symbol of spec.symbols) {
