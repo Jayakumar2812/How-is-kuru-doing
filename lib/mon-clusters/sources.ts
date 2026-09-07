@@ -870,6 +870,5 @@ export function applyExternalLiquidations(
 export function mergeClusterSeries(preferred: ClusterSeries, fallback: ClusterSeries | undefined): ClusterSeries {
   if (preferred.status === "ok" && preferred.levels.length) return preferred;
   if (fallback && fallback.status === "ok" && fallback.levels.length) return fallback;
-  if (preferred.status === "ok") return preferred;
-  return fallback ?? preferred;
+  return preferred;
 }
