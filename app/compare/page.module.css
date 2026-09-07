@@ -44,6 +44,12 @@
   gap: 0.35rem;
 }
 
+.navRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+}
+
 .backLink {
   font-size: 0.9rem;
   color: rgba(255, 255, 255, 0.72);
