@@ -309,6 +309,10 @@ export default function HomePage() {
             Live
           </div>
           <h1 className={styles.title}>How is Kuru doing?</h1>
+          <nav className={styles.pageNav} aria-label="Pages">
+            <Link href="/compare">USDC compare</Link>
+            <Link href="/mon">MON clusters</Link>
+          </nav>
         </div>
 
         <div className={styles.topRight}>
@@ -428,17 +432,32 @@ export default function HomePage() {
         )}
       </section>
 
-      <section className={styles.compareTeaser} aria-label="USDC swap comparison">
-        <div className={styles.compareTeaserInner}>
-          <div>
-            <h2 className={styles.compareTeaserTitle}>What do you get for $1k USDC?</h2>
-            <p className={styles.compareTeaserSub}>
-              One-hop quotes · Kuru vs Monad DEXs vs global order books
-            </p>
+      <section className={styles.teaserGrid} aria-label="Other dashboards">
+        <div className={styles.compareTeaser}>
+          <div className={styles.compareTeaserInner}>
+            <div>
+              <h2 className={styles.compareTeaserTitle}>What do you get for $1k USDC?</h2>
+              <p className={styles.compareTeaserSub}>
+                One-hop quotes · Kuru vs Monad DEXs vs global order books
+              </p>
+            </div>
+            <Link href="/compare" className={styles.compareTeaserCta}>
+              Full comparison →
+            </Link>
           </div>
-          <Link href="/compare" className={styles.compareTeaserCta}>
-            Full comparison →
-          </Link>
+        </div>
+        <div className={styles.compareTeaser}>
+          <div className={styles.compareTeaserInner}>
+            <div>
+              <h2 className={styles.compareTeaserTitle}>MON long / short clusters</h2>
+              <p className={styles.compareTeaserSub}>
+                Hyperliquid liquidation heatmap · venue mark, funding, OI, 24h rekt
+              </p>
+            </div>
+            <Link href="/mon" className={styles.compareTeaserCta}>
+              Open map →
+            </Link>
+          </div>
         </div>
       </section>
 

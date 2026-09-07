@@ -207,9 +207,14 @@ export default function ComparePage() {
 
       <header className={styles.topBar}>
         <div className={styles.topLeft}>
-          <Link href="/" className={styles.backLink}>
-            ← Dashboard
-          </Link>
+          <div className={styles.navRow}>
+            <Link href="/" className={styles.backLink}>
+              ← Dashboard
+            </Link>
+            <Link href="/mon" className={styles.backLink}>
+              MON clusters
+            </Link>
+          </div>
           <h1 className={styles.title}>USDC swap comparison</h1>
         </div>
         <div className={styles.topRight}>

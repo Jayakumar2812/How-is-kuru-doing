@@ -48,7 +48,25 @@
 .topLeft {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 1rem;
+}
+
+.pageNav {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.pageNav a {
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.pageNav a:hover {
+  color: #6ee7b7;
 }
 
 .topRight {
@@ -658,10 +676,19 @@
   color: #64748b;
 }
 
+.teaserGrid {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.85rem;
+  margin: 0.5rem 1.5rem 1.25rem;
+}
+
 .compareTeaser {
   position: relative;
   z-index: 1;
-  margin: 0.5rem 1.5rem 1.25rem;
+  margin: 0;
 }
 
 .compareTeaserInner {
@@ -731,7 +758,7 @@
     width: 20px;
   }
 
-  .compareTeaser {
+  .teaserGrid {
     margin: 0.5rem 1rem 1rem;
   }
 }
